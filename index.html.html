@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ronaldo vs Messi 3D Penalty Shootout</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Outfit', sans-serif;
+            background: #0f172a;
+            user-select: none;
+        }
+        .arcade-font {
+            font-family: 'Press Start 2P', monospace;
+        }
+        @keyframes pulse-glow {
+            0%, 100% { text-shadow: 0 0 10px rgba(234, 179, 8, 0.6); }
+            50% { text-shadow: 0 0 25px rgba(234, 179, 8, 0.9); }
+        }
+        .glow-text {
+            animation: pulse-glow 2s infinite;
+        }
+    </style>
+</head>
+<body class="relative w-screen h-screen overflow-hidden">
+
+    <div id="ui-container" class="absolute top-0 left-0 w-full p-6 flex flex-col md:flex-row justify-between items-center pointer-events-none z-10">
+        <!-- Ronaldo Score Box -->
+        <div class="pointer-events-auto bg-slate-900/90 backdrop-blur-md border-2 border-red-500/80 rounded-2xl p-4 shadow-2xl flex items-center space-x-6 mb-4 md:mb-0 transform hover:scale-105 transition-all">
+            <div class="w-14 h-14 bg-red-600 rounded-2xl flex items-center justify-center font-bold text-xl text-white shadow-inner">CR7</div>
+            <div>
+                <h2 class="text-red-400 font-bold text-sm tracking-wider uppercase">Cristiano Ronaldo</h2>
+                <div class="flex items-baseline space-x-2">
+                    <span id="score-ronaldo" class="arcade-font text-5xl text-white font-black">0</span>
+                    <span class="text-xs text-slate-400">Goals</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Center Match Timer & Controls -->
+        <div class="pointer-events-auto text-center bg-slate-900/95 backdrop-blur-md border border-slate-700 rounded-2xl px-8 py-4 shadow-2xl">
+            <h1 class="arcade-font text-yellow-400 text-xs mb-1 glow-text">PENALTY DUEL</h1>
+            <div class="flex items-center justify-center space-x-3 my-2">
+                <span id="timer-display" class="arcade-font text-2xl md:text-3xl text-white font-bold">45:30</span>
+            </div>
+            <p id="game-message" class="text-slate-300 text-sm font-semibold mb-3">Click Ronaldo, Messi, or their balls to shoot!</p>
+            <div class="flex justify-center space-x-2">
+                <button id="start-btn" onclick="startMatch()" class="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg shadow transition">Start Match</button>
+                <button onclick="resetGame()" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded-lg transition">Reset</button>
+            </div>
+        </div>
+
+        <!-- Messi Score Box -->
+        <div class="pointer-events-auto bg-slate-900/90 backdrop-blur-md border-2 border-blue-500/80 rounded-2xl p-4 shadow-2xl flex items-center space-x-6 transform hover:scale-105 transition-all">
+            <div class="text-right">
+                <h2 class="text-blue-400 font-bold text-sm tracking-wider uppercase">Lionel Messi</h2>
+                <div class="flex items-baseline justify-end space-x-2">
+                    <span class="text-xs text-slate-400">Goals</span>
+                    <span id="score-messi" class="arcade-font text-5xl text-white font-black">0</span>
+                </div>
+            </div>
+            <div class="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center font-bold text-xl text-white shadow-inner">LM10</div>
+        </div>
+    </div>
+
+    <div id="popup-banner" class="absolute top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none z-20 opacity-0 transition-all duration-300 scale-50">
+        <div id="popup-content" class="arcade-font text-3xl md:text-5xl text-yellow-400 drop-shadow-[0_10px_10px_rgba(0,0,0,0.8)] text-center px-4">
+            GOOOAL!
+        </div>
+    </div>
+
+    <div id="canvas-container" class="w-full h-full absolute inset-0"></div>
+
+    <script>
+        class SoundEngine {
+            constructor() {
+                this.ctx = null;
+            }
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            }
+            playKick() {
+                this.init();
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(120, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(30, this.ctx.currentTime + 0.15);
+                gain.gain.setValueAtTime(0.8, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.15);
+            }
+            playGoalCheer() {
+                this.init();
+                if (!this.ctx) return;
+                const bufferSize = this.ctx.sampleRate * 1.5;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                const filter = this.ctx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.setValueAtTime(600, this.ctx.currentTime);
+                filter.Q.setValueAtTime(1, this.ctx.currentTime);
+
+                const gain = this.ctx.createGain();
+                gain.gain.setValueAtTime(0.6, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.9, this.ctx.currentTime + 0.4);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 1.5);
+
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(this.ctx.destination);
+                noise.start();
+            }
+            playMiss() {
+                this.init();
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+                osc.frequency.linearRampToValueAtTime(80, this.ctx.currentTime + 0.3);
+                gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.3);
+            }
+            playPostHit() {
+                this.init();
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(220, this.ctx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.7, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.2);
+            }
+            speakName(name) {
+                if ('speechSynthesis' in window) {
+                    window.speechSynthesis.cancel();
+                    const utterance = new SpeechSynthesisUtterance(name);
+                    utterance.lang = 'en-US';
+                    utterance.rate = 1.2;
+                    utterance.pitch = 1.1;
+                    window.speechSynthesis.speak(utterance);
+                }
+            }
+        }
+
+        const soundFx = new SoundEngine();
+
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0b132b);
+        scene.fog = new THREE.FogExp2(0x0b132b, 0.015);
+
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 4.0, 8.5);
+        camera.lookAt(0, 2.0, -12);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(10, 25, 15);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        dirLight.shadow.camera.near = 0.5;
+        dirLight.shadow.camera.far = 50;
+        dirLight.shadow.camera.left = -15;
+        dirLight.shadow.camera.right = 15;
+        dirLight.shadow.camera.top = 15;
+        dirLight.shadow.camera.bottom = -15;
+        scene.add(dirLight);
+
+        const pitchGeo = new THREE.PlaneGeometry(60, 70);
+        const pitchMat = new THREE.MeshStandardMaterial({ 
+            color: 0x1e6b35, 
+            roughness: 0.8,
+            metalness: 0.1 
+        });
+        const pitch = new THREE.Mesh(pitchGeo, pitchMat);
+        pitch.rotation.x = -Math.PI / 2;
+        pitch.receiveShadow = true;
+        scene.add(pitch);
+
+        const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const centerLineGeo = new THREE.PlaneGeometry(0.3, 50);
+        const centerLine = new THREE.Mesh(centerLineGeo, lineMat);
+        centerLine.rotation.x = -Math.PI / 2;
+        centerLine.position.set(0, 0.01, -10);
+        scene.add(centerLine);
+
+        const goalGroup = new THREE.Group();
+        goalGroup.position.set(0, 0, -22);
+
+        const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2, metalness: 0.5 });
+        const postGeo = new THREE.CylinderGeometry(0.12, 0.12, 5, 16);
+
+        const leftPost = new THREE.Mesh(postGeo, postMat);
+        leftPost.position.set(-5.5, 2.5, 0);
+        leftPost.castShadow = true;
+        goalGroup.add(leftPost);
+
+        const rightPost = new THREE.Mesh(postGeo, postMat);
+        rightPost.position.set(5.5, 2.5, 0);
+        rightPost.castShadow = true;
+        goalGroup.add(rightPost);
+
+        const crossbarGeo = new THREE.CylinderGeometry(0.12, 0.12, 11.2, 16);
+        const crossbar = new THREE.Mesh(crossbarGeo, postMat);
+        crossbar.rotation.z = Math.PI / 2;
+        crossbar.position.set(0, 5, 0);
+        crossbar.castShadow = true;
+        goalGroup.add(crossbar);
+
+        const netWidth = 11;
+        const netHeight = 5;
+        const netDepth = 3;
+        const segX = 14;
+        const segY = 8;
+        const netGeo = new THREE.PlaneGeometry(netWidth, netHeight, segX, segY);
+        const netMat = new THREE.MeshBasicMaterial({ 
+            color: 0xdddddd, 
+            wireframe: true, 
+            transparent: true, 
+            opacity: 0.6 
+        });
+        const netMesh = new THREE.Mesh(netGeo, netMat);
+        netMesh.position.set(0, 2.5, -netDepth);
+        goalGroup.add(netMesh);
+        scene.add(goalGroup);
+
+        const originalNetPositions = new Float32Array(netGeo.attributes.position.array);
+
+        function createPlayer(isRonaldo) {
+            const playerGroup = new THREE.Group();
+            
+            const jerseyColor = isRonaldo ? 0xdc2626 : 0x2563eb; 
+            const shortColor = isRonaldo ? 0xffffff : 0x1e3a8a;
+            const bootColor = isRonaldo ? 0xf59e0b : 0x06b6d4; 
+            const hairColor = isRonaldo ? 0x111827 : 0x3b220c;
+
+            const skinMat = new THREE.MeshStandardMaterial({ color: 0xf3d2c1, roughness: 0.6 });
+            const jerseyMat = new THREE.MeshStandardMaterial({ color: jerseyColor, roughness: 0.4 });
+            const shortMat = new THREE.MeshStandardMaterial({ color: shortColor, roughness: 0.5 });
+            const bootMat = new THREE.MeshStandardMaterial({ color: bootColor, roughness: 0.3 });
+            const hairMat = new THREE.MeshStandardMaterial({ color: hairColor, roughness: 0.3 });
+
+            const scaleY = isRonaldo ? 1.05 : 0.95;
+            playerGroup.scale.set(1, scaleY, 1);
+
+            const headGeo = new THREE.SphereGeometry(0.32, 16, 16);
+            const head = new THREE.Mesh(headGeo, skinMat);
+            head.position.set(0, 2.3, 0);
+            head.castShadow = true;
+            playerGroup.add(head);
+
+            const hairGeo = isRonaldo 
+                ? new THREE.ConeGeometry(0.33, 0.3, 12) 
+                : new THREE.SphereGeometry(0.34, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.65);
+            const hair = new THREE.Mesh(hairGeo, hairMat);
+            if (isRonaldo) {
+                hair.rotation.x = -0.3;
+                hair.position.set(0, 2.45, -0.05);
+            } else {
+                hair.position.set(0, 2.38, -0.02);
+            }
+            playerGroup.add(hair);
+
+            const torsoGeo = new THREE.CylinderGeometry(0.35, 0.28, 1.1, 16);
+            const torso = new THREE.Mesh(torsoGeo, jerseyMat);
+            torso.position.set(0, 1.45, 0);
+            torso.castShadow = true;
+            playerGroup.add(torso);
+
+            // High-contrast 3D number badge on chest
+            const numberGeo = new THREE.BoxGeometry(0.2, 0.2, 0.05);
+            const whiteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const chestBadge = new THREE.Mesh(numberGeo, whiteMat);
+            chestBadge.position.set(0, 1.5, -0.28);
+            playerGroup.add(chestBadge);
+
+            const armGeo = new THREE.CylinderGeometry(0.12, 0.1, 0.9, 12);
+            const leftArm = new THREE.Mesh(armGeo, jerseyMat);
+            leftArm.position.set(-0.48, 1.5, 0);
+            leftArm.rotation.z = 0.2;
+            leftArm.castShadow = true;
+            playerGroup.add(leftArm);
+
+            const rightArm = new THREE.Mesh(armGeo, jerseyMat);
+            rightArm.position.set(0.48, 1.5, 0);
+            rightArm.rotation.z = -0.2;
+            rightArm.castShadow = true;
+            playerGroup.add(rightArm);
+
+            const shortGeo = new THREE.CylinderGeometry(0.3, 0.28, 0.5, 16);
+            const shorts = new THREE.Mesh(shortGeo, shortMat);
+            shorts.position.set(0, 0.85, 0);
+            shorts.castShadow = true;
+            playerGroup.add(shorts);
+
+            const legGroup = new THREE.Group();
+            const legGeo = new THREE.CylinderGeometry(0.11, 0.09, 0.8, 12);
+            
+            const leftLeg = new THREE.Mesh(legGeo, skinMat);
+            leftLeg.position.set(-0.16, 0.4, 0);
+            leftLeg.castShadow = true;
+            legGroup.add(leftLeg);
+
+            const rightLeg = new THREE.Mesh(legGeo, skinMat);
+            rightLeg.position.set(0.16, 0.4, 0);
+            rightLeg.name = "rightLeg";
+            rightLeg.castShadow = true;
+            legGroup.add(rightLeg);
+
+            const bootGeo = new THREE.BoxGeometry(0.15, 0.15, 0.35);
+            const leftBoot = new THREE.Mesh(bootGeo, bootMat);
+            leftBoot.position.set(-0.16, 0.05, -0.08);
+            leftBoot.castShadow = true;
+            legGroup.add(leftBoot);
+
+            const rightBoot = new THREE.Mesh(bootGeo, bootMat);
+            rightBoot.position.set(0.16, 0.05, -0.08);
+            rightBoot.name = "rightBoot";
+            rightBoot.castShadow = true;
+            legGroup.add(rightBoot);
+
+            playerGroup.add(legGroup);
+            playerGroup.rotation.y = 0; // Facing forward toward goal (-Z)
+
+            return playerGroup;
+        }
+
+        const ronaldo = createPlayer(true);
+        ronaldo.position.set(-2.2, 0, 1.5);
+        scene.add(ronaldo);
+
+        const messi = createPlayer(false);
+        messi.position.set(2.2, 0, 1.5);
+        scene.add(messi);
+
+        const ballGeo = new THREE.SphereGeometry(0.22, 32, 32);
+        const ballMat = new THREE.MeshStandardMaterial({ 
+            color: 0xffffff, 
+            roughness: 0.3,
+            metalness: 0.1
+        });
+        
+        const canvasTex = document.createElement('canvas');
+        canvasTex.width = 512;
+        canvasTex.height = 256;
+        const ctx = canvasTex.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 512, 256);
+        ctx.fillStyle = '#111111';
+        for(let i=0; i<10; i++) {
+            ctx.beginPath();
+            ctx.arc(i * 60 + 20, 128, 25, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        const ballTexture = new THREE.CanvasTexture(canvasTex);
+        ballMat.map = ballTexture;
+
+        const ballRonaldo = new THREE.Mesh(ballGeo, ballMat);
+        ballRonaldo.position.set(-2.2, 0.22, 0.9);
+        ballRonaldo.castShadow = true;
+        scene.add(ballRonaldo);
+
+        const ballMessi = new THREE.Mesh(ballGeo, ballMat);
+        ballMessi.position.set(2.2, 0.22, 0.9);
+        ballMessi.castShadow = true;
+        scene.add(ballMessi);
+
+        let scores = { ronaldo: 0, messi: 0 };
+        let matchActive = false;
+        let timeLeft = 2730; // 45 minutes and 30 seconds in seconds
+        let matchEnded = false;
+        const activeBalls = [];
+
+        const goalCommentaries = ["GOOOAL!", "UNSTOPPABLE!", "ABSOLUTE STUNNER!", "TOP CORNER!"];
+        const missCommentaries = ["WIDE!", "MISSED!", "OVER THE BAR!", "SO CLOSE!"];
+        const postCommentaries = ["OFF THE POST!", "CROSSBAR!", "UNLUCKY!"];
+
+        function getRandomCommentary(array) {
+            return array[Math.floor(Math.random() * array.length)];
+        }
+
+        function startMatch() {
+            matchActive = true;
+            matchEnded = false;
+            document.getElementById('game-message').innerText = "Match in progress! Shoot now!";
+            document.getElementById('start-btn').innerText = "Playing...";
+        }
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        setInterval(() => {
+            if (matchActive && !matchEnded && timeLeft > 0) {
+                timeLeft--;
+                document.getElementById('timer-display').innerText = formatTime(timeLeft);
+                if (timeLeft <= 0) {
+                    endMatch();
+                }
+            }
+        }, 1000);
+
+        function endMatch() {
+            matchActive = false;
+            matchEnded = true;
+            const winner = scores.ronaldo > scores.messi ? "Ronaldo" : scores.messi > scores.ronaldo ? "Messi" : "It's a Draw";
+            const msg = winner === "It's a Draw" ? "MATCH ENDED IN A DRAW!" : `${winner} WINS THE MATCH!`;
+            showPopup(msg, "#38bdf8");
+            document.getElementById('game-message').innerText = msg;
+            soundFx.playGoalCheer();
+        }
+
+        function kickPlayer(playerKey) {
+            if (matchEnded) return;
+            if (!matchActive) startMatch();
+
+            const isRon = (playerKey === 'ronaldo');
+            const player = isRon ? ronaldo : messi;
+            const ball = isRon ? ballRonaldo : ballMessi;
+            const playerName = isRon ? "Ronaldo" : "Messi";
+
+            if (ball.userData.moving) return;
+
+            soundFx.speakName(playerName);
+            soundFx.playKick();
+
+            const rightLeg = player.getObjectByName("rightLeg");
+            let kickProgress = 0;
+            const kickInterval = setInterval(() => {
+                kickProgress += 0.2;
+                if (kickProgress < Math.PI) {
+                    rightLeg.rotation.x = -Math.sin(kickProgress) * 1.2;
+                    rightLeg.position.z = -Math.sin(kickProgress) * 0.3;
+                } else {
+                    rightLeg.rotation.x = 0;
+                    rightLeg.position.z = 0;
+                    clearInterval(kickInterval);
+                }
+            }, 25);
+
+            const targetX = (Math.random() - 0.5) * 8.0; 
+            const targetY = 0.5 + Math.random() * 3.2; 
+            const targetZ = -22; 
+
+            const randOutcome = Math.random();
+            let finalTargetX = targetX;
+            let finalTargetY = targetY;
+            let outcomeType = 'goal';
+
+            if (randOutcome < 0.65) {
+                outcomeType = 'goal';
+            } else if (randOutcome < 0.85) {
+                outcomeType = 'post';
+                finalTargetX = Math.random() > 0.5 ? 5.5 : -5.5;
+                finalTargetY = 2.5;
+            } else {
+                outcomeType = 'miss';
+                finalTargetX = Math.random() > 0.5 ? 6.5 : -6.5;
+                finalTargetY = 5.2;
+            }
+
+            ball.userData = {
+                moving: true,
+                startX: ball.position.x,
+                startY: ball.position.y,
+                startZ: ball.position.z,
+                targetX: finalTargetX,
+                targetY: finalTargetY,
+                targetZ: targetZ,
+                progress: 0,
+                speed: 0.035,
+                outcome: outcomeType,
+                player: playerKey
+            };
+
+            if (!activeBalls.includes(ball)) {
+                activeBalls.push(ball);
+            }
+        }
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        window.addEventListener('click', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(scene.children, true);
+
+            for (let i = 0; i < intersects.length; i++) {
+                let obj = intersects[i].object;
+                
+                if (obj === ballRonaldo || obj.parent === ballRonaldo) {
+                    kickPlayer('ronaldo');
+                    break;
+                } else if (obj === ballMessi || obj.parent === ballMessi) {
+                    kickPlayer('messi');
+                    break;
+                } else if (obj.parent === ronaldo || obj.parent?.parent === ronaldo) {
+                    kickPlayer('ronaldo');
+                    break;
+                } else if (obj.parent === messi || obj.parent?.parent === messi) {
+                    kickPlayer('messi');
+                    break;
+                }
+            }
+        });
+
+        let netVibrationTime = 0;
+
+        function triggerNetVibration() {
+            netVibrationTime = 1.0;
+            soundFx.playGoalCheer();
+            const comment = getRandomCommentary(goalCommentaries);
+            showPopup(comment);
+        }
+
+        function triggerPostHit() {
+            soundFx.playPostHit();
+            const comment = getRandomCommentary(postCommentaries);
+            showPopup(comment, "#38bdf8");
+        }
+
+        function triggerMiss() {
+            soundFx.playMiss();
+            const comment = getRandomCommentary(missCommentaries);
+            showPopup(comment, "#ef4444");
+        }
+
+        function showPopup(text, color = "#eab308") {
+            const banner = document.getElementById('popup-banner');
+            const content = document.getElementById('popup-content');
+            content.innerText = text;
+            content.style.color = color;
+            
+            banner.classList.remove('opacity-0', 'scale-50');
+            banner.classList.add('opacity-100', 'scale-100');
+
+            setTimeout(() => {
+                banner.classList.remove('opacity-100', 'scale-100');
+                banner.classList.add('opacity-0', 'scale-50');
+            }, 1800);
+        }
+
+        function resetGame() {
+            scores = { ronaldo: 0, messi: 0 };
+            document.getElementById('score-ronaldo').innerText = "0";
+            document.getElementById('score-messi').innerText = "0";
+            timeLeft = 2730;
+            document.getElementById('timer-display').innerText = "45:30";
+            matchActive = false;
+            matchEnded = false;
+            document.getElementById('start-btn').innerText = "Start Match";
+            ballRonaldo.position.set(-2.2, 0.22, 0.9);
+            ballRonaldo.userData.moving = false;
+            ballMessi.position.set(2.2, 0.22, 0.9);
+            ballMessi.userData.moving = false;
+            document.getElementById('game-message').innerText = "Click Ronaldo, Messi, or their balls to shoot!";
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            for (let i = activeBalls.length - 1; i >= 0; i--) {
+                const ball = activeBalls[i];
+                if (ball.userData && ball.userData.moving) {
+                    ball.userData.progress += ball.userData.speed;
+                    const p = ball.userData.progress;
+
+                    if (p <= 1.0) {
+                        const currentX = THREE.MathUtils.lerp(ball.userData.startX, ball.userData.targetX, p);
+                        const currentZ = THREE.MathUtils.lerp(ball.userData.startZ, ball.userData.targetZ, p);
+                        const arcHeight = Math.sin(p * Math.PI) * 2.5;
+                        const currentY = THREE.MathUtils.lerp(ball.userData.startY, ball.userData.targetY, p) + arcHeight;
+
+                        ball.position.set(currentX, Math.max(0.22, currentY), currentZ);
+                        ball.rotation.x += 0.1;
+                        ball.rotation.z += 0.1;
+
+                        if (p >= 0.98 && ball.userData.moving) {
+                            ball.userData.moving = false;
+                            
+                            if (ball.userData.outcome === 'goal') {
+                                triggerNetVibration();
+                                if (ball.userData.player === 'ronaldo') {
+                                    scores.ronaldo++;
+                                    document.getElementById('score-ronaldo').innerText = scores.ronaldo;
+                                } else {
+                                    scores.messi++;
+                                    document.getElementById('score-messi').innerText = scores.messi;
+                                }
+                            } else if (ball.userData.outcome === 'post') {
+                                triggerPostHit();
+                            } else {
+                                triggerMiss();
+                            }
+
+                            setTimeout(() => {
+                                if (ball.userData.player === 'ronaldo') {
+                                    ball.position.set(-2.2, 0.22, 0.9);
+                                } else {
+                                    ball.position.set(2.2, 0.22, 0.9);
+                                }
+                            }, 1800);
+                        }
+                    }
+                }
+            }
+
+            if (netVibrationTime > 0) {
+                netVibrationTime -= 0.03;
+                const posAttr = netGeo.attributes.position;
+                
+                for (let i = 0; i < posAttr.count; i++) {
+                    const vx = originalNetPositions[i * 3];
+                    const vy = originalNetPositions[i * 3 + 1];
+                    const vz = originalNetPositions[i * 3 + 2];
+                    
+                    const displacement = Math.sin(netVibrationTime * 25 + vx * 3) * 0.25 * netVibrationTime;
+                    posAttr.setZ(i, vz + displacement);
+                }
+                posAttr.needsUpdate = true;
+            } else {
+                const posAttr = netGeo.attributes.position;
+                for (let i = 0; i < posAttr.count; i++) {
+                    posAttr.setZ(i, originalNetPositions[i * 3 + 2]);
+                }
+                posAttr.needsUpdate = true;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        window.onload = function () {
+            animate();
+        };
+    </script>
+</body>
+</html>
